@@ -1,0 +1,676 @@
+<!doctype html>
+<html style="margin:0;padding:0">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Fractal Splash Graphic</title>
+  </head>
+<body style="margin:0;padding:0;background-color:lightblue;">
+	<textarea id="edit_points" style="width:400px;height:50px;position:absolute;z-index:1000;opacity:0.5;display:none;background:#bef;font-size:12pt;font-family:Geneva"></textarea>	
+
+<script type="text/javascript">
+
+var Animation = {
+	degrees:0.0,
+ 	degreesPerSecond:-90,
+	waves:[],
+	init:function(){
+		this.setNow();
+		this.startTime=this.now;
+		this.canvas = document.createElement("canvas");
+		this.canvas.style.position = 'absolute';
+		this.canvas.style.left = '0px';
+		this.canvas.style.top = '0px';
+		this.canvas.style.zIndex = '10';
+		document.body.appendChild(this.canvas);
+		this.context = this.canvas.getContext("2d");
+		this.resize();
+		if(!this.interval) this.interval=setInterval(function(){Animation.drawWaves()}, 35);
+	},
+	setNow:function(){
+		this.now = new Date().getTime();
+	},
+	clearTempImageData:function(){
+		this.tempImageData = this.context.createImageData(this.width,this.height);
+	},
+	resize:function(){
+		var a = Animation;
+		a.width = window.innerWidth;
+		a.height = window.innerHeight;
+		a.canvas.width = a.width;
+		a.canvas.height = a.height;
+	 	a.maxRadiusSquared = (a.width+30)*(a.width+30)+(a.height+30)*(a.height+30);
+	},
+	drawWaves:function(){
+try{
+		var a = Animation;
+		var c = a.context;
+		a.setNow();
+		c.clearRect(0, 0, a.width, a.height);
+		a.degrees = a.degreesPerSecond * (a.now-a.startTime)/1000.0;
+		for(var i=a.waves.length-1;i>=0;i--)
+			if(a.waves[i].completed) a.waves.splice(i, 1);
+		for(var i=0;i<a.waves.length;i++) a.waves[i].setLevelOpacities();
+		a.clearTempImageData();
+		for(var i=0;i<a.waves.length;i++) a.waves[i].drawStatic();
+		c.putImageData(a.tempImageData, 0, 0);
+		c.save();
+		c.translate(a.width/2,a.height/2);
+		c.rotate(a.degrees * Math.PI / 180);
+		for(var i=0;i<a.waves.length;i++)
+			a.waves[i].drawDynamic(a.degrees);
+		c.restore();
+}catch(e){alert(e.toSource())};
+	},
+	start:function(fractal){
+		if(fractal.length>=2) this.waves.push(new this.wave(this,fractal,12));
+	},
+	stop:function(fractal){
+		this.waves = [];
+	},
+	wave:function(animation,fractal,life){
+		this.animation = animation;
+		this.fractal = fractal;
+		this.shape = 'diamond';
+		this.life = life;
+		this.start = animation.now;
+		this.completed = false;
+		var segments = fractal.length/2+1;
+		var last = Math.round(Math.log((animation.width+animation.height)*2.5)/Math.log(segments));
+		
+		// create levels
+		this.levels = [];
+		for(var i=0;i<=last;i++) {
+			this.levels.push({
+				active:false,
+				static:false,
+				opacity:0,
+				rectSize:Math.round((last-i)*(last-i)*49/(last*last)+1),
+				begin:i*(this.life/(last+5)),
+				peak:(i+2)*(this.life/(last+5)),
+				end:(i+5)*(this.life/(last+5)),
+				fractalPoints:[]
+			});
+		}
+		
+		// resolve fractal by level
+		var levels=this.levels;
+		levels[0].fractalPoints.push([0,0]);
+		resolveFractal(this.fractal,[0,0],[1,0],1);
+		function resolveFractal(f,a,b,level){
+			if(level<levels.length){
+				var ax=a[0], ay=a[1], bx=b[0], by=b[1];
+				var p1=a;
+				for(var i=0; i<f.length; i+=2){
+					var tx = f[i]||1;
+					var ty = -(f[i+1]||0); // because origin is in upper left
+					var p2 = [ax*(1-tx)+bx*tx-(by-ay)*ty, ay*(1-tx)+by*tx+(bx-ax)*ty];
+					levels[level].fractalPoints.push(p2);
+					resolveFractal(f,p1,p2,level+1);
+					p1=p2;
+				}
+				resolveFractal(f,p1,b,level+1);
+			}
+		}
+		
+		// create list of pixels for non-rotating levels
+		for(var i=0;i<=last;i++) {
+			l = this.levels[i];
+			if(l.rectSize<10){
+				l.static = true;
+				var snapshot = levelSnapshot(this,i);
+				l.pixelList = pixelsFromSnapshot(snapshot);
+			}
+		}
+		
+		function levelSnapshot(wave, i){
+			var l=wave.levels[i];
+			var a=animation;
+			var c=a.context;
+			l.active = true;
+			l.static = false;
+			l.opacity = 0.05;
+			c.save();
+			c.clearRect(0, 0, a.width, a.height);
+			c.translate(a.width/2,a.height/2);
+			wave.polygon = diamond(a.width*0.85,a.height*0.8,0);
+			wave.drawLevel(i);
+			var data = c.getImageData(0, 0, a.width, a.height);
+			c.restore();
+			l.active = false;
+			l.static = true;
+			l.opacity = 0;
+			return data;
+		}
+		function pixelsFromSnapshot(imageData){
+			var pixels = [];
+			for(var i=0;i<imageData.width*imageData.height;i++)
+				if(imageData.data[i*4+3]>0) pixels.push(i);
+			return pixels;
+		}
+	}
+}
+
+Animation.wave.prototype.setLevelOpacities=function(){
+	var elapsed = (this.animation.now-this.start)/1000.0;
+	for(var i=0;i<this.levels.length;i++){
+		var l=this.levels[i];
+		if(elapsed>l.begin && elapsed<l.end){
+			l.active = true;
+			if(elapsed<l.peak){
+				l.opacity = (elapsed-l.begin)/(l.peak-l.begin);
+			}else{
+				l.opacity = 1-(elapsed-l.peak)/(l.end-l.peak);
+			}
+		}else{
+			l.active = false;
+			l.opacity = 0;
+		}
+	}
+	if(elapsed>=this.life) this.completed = true;
+}
+
+Animation.wave.prototype.drawStatic=function(degrees){
+	var a = this.animation;
+	for(var i=0;i<this.levels.length;i++){
+		var l=this.levels[i];
+		if(l.active && l.static){
+			var d = a.tempImageData.data;
+			var p = l.pixelList;
+			var len = p.length;
+			var o = Math.round(l.opacity*255);
+			var k;
+			for(var j=0;j<len;j++){
+				k = p[j]*4;
+				if(d[k+3]<o){
+					d[k]=255;
+					d[k+1]=255;
+					d[k+2]=255;
+					d[k+3]=o;
+				}
+			}
+		}
+	}
+}
+
+Animation.wave.prototype.drawDynamic=function(degrees){
+	var a = this.animation, l=this.levels, len=this.levels.length;
+	if(this.shape=='diamond')
+		this.polygon = diamond(a.width*0.85,a.height*0.8,a.degrees);
+	for(var i=0;i<len;i++)
+		if(l[i].active && !l[i].static) this.drawLevel(i);
+}
+
+Animation.wave.prototype.drawLevel=function(level){
+	var c=this.animation.context;
+	var l=this.levels[level];
+	var p=l.fractalPoints;
+	var len=p.length;
+	c.fillStyle = 'rgba(255,255,255,' + l.opacity + ')';
+	for(var i=0;i<len;i++)
+		drawPolygonFractalRects(c,p[i],[this.polygon[0],this.polygon[1]],l.rectSize,180);
+}
+
+function drawPolygonFractalRects(c,pt,poly,s,sym) {
+	// alert(poly.toSource());
+	var tx=pt[0], ty=pt[1], len=poly.length, e=poly[0];
+	if(sym)
+		e = (sym==90) ? [e[1],-e[0]] : [-e[0],-e[1]];
+	for(i=0;i<len;i++){
+		var a=poly[i], b=poly[i+1]||e;
+		var ax=a[0], ay=a[1], bx=b[0], by=b[1];
+		var x = ax*(1-tx)+bx*tx-(by-ay)*ty;
+		var y = ay*(1-tx)+by*tx+(bx-ax)*ty;
+	  	c.fillRect( x-s/2, y-s/2, s, s);
+		if(sym)
+	  		c.fillRect(-x-s/2,-y-s/2, s, s);
+		if(sym==90){
+		  	c.fillRect( -x-s/2, y-s/2, s, s);
+		  	c.fillRect( x-s/2, -y-s/2, s, s);
+		}
+	}
+}
+
+function diamond(w,h,deg){
+	var sin = Math.sin(deg * Math.PI / 180);
+	var cos = Math.cos(deg * Math.PI / 180);
+	return [ [-cos*w/2, sin*w/2], [-sin*h/2, -cos*h/2], [cos*w/2, -sin*w/2], [sin*h/2, cos*h/2] ];
+}
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+
+function get_edit_box(){
+	return document.getElementById('edit_points');
+}
+
+var fractals = [[0.95, -0.2]];
+var readable_points = display_points(fractals[0]);
+get_edit_box().value = readable_points;
+
+function display_points(points_arr){
+	var points = points_arr.slice(0);
+	var display = [];
+	while(points.length>1){
+		var x = points.shift();
+		var y = points.shift();
+		display.push('('+x+', '+y+')');
+	}
+	return display.join(' ');
+}
+
+function parse_points(readable_str){
+	var m;
+	var str = readable_str;
+	var points = [];
+	while(str.length > 0){
+	  m = str.match(/^[^\d\.\-\+]*/);
+	  if(m) {
+		str = str.substr(m[0].length);
+	  }
+	  m = str.match(/^(\-|\+)?(\d+\.?\d*|\.\d+)/);
+	  if(m) {
+		points.push(m[0]);
+	    str = str.substr(m[0].length);
+      }
+	}
+	return points;
+}
+
+function toggle_edit_box(){
+	var e = get_edit_box();
+	if(e.style.display=='none'){
+		show_edit_box();
+	}else{
+		hide_edit_box();
+	}
+}
+
+function show_edit_box(){	
+	 var e = get_edit_box();
+	 e.style.display = 'block';
+	 e.style.top = (window.innerHeight-e.offsetHeight)/2+"px";
+	 e.style.left = (window.innerWidth-e.offsetWidth)/2+"px";
+	 e.focus();
+}
+
+function process_edit_box(){
+	var e = get_edit_box();
+	fractals[0] = parse_points(e.value);
+	hide_edit_box();
+}
+
+function hide_edit_box(){
+	var e = get_edit_box();
+	e.style.display = "none";
+}
+
+var Graphs = {
+	visible:false,
+	list:[],
+	show:function(){
+		Graphs.setVisible(true);
+	},
+	hide:function(){
+		Graphs.setVisible(false);
+	},
+	fadeOut:function(){
+		var fade = function(){
+			var opacity = 1 - (new Date().getTime()-Graphs.fadeStartTime)/750.0;
+			if(opacity<=0){
+				window.clearInterval(Graphs.faderInterval);
+				Graphs.hide();
+			}else{
+				for(var i=0;i<Graphs.list.length;i++){
+					if(Graphs.list[i].canvas.style.opacity > opacity)
+						Graphs.list[i].canvas.style.opacity = opacity;
+				}
+				if(Graphs.editor.canvas.style.opacity > opacity)
+					Graphs.editor.canvas.style.opacity = opacity;
+			}
+		}
+		Graphs.faderInterval = window.setInterval(fade, 30);
+		Graphs.fadeStartTime = new Date().getTime();
+	},
+	toggle:function(){
+		Graphs.setVisible(!Graphs.visible);
+	},
+	setVisible:function(v){
+		Graphs.visible = v;
+		for(var i=0;i<Graphs.list.length;i++){ Graphs.list[i].setVisible(v); }
+		if(Graphs.editor) Graphs.editor.setVisible(v);	
+	},
+	add:function(fractal){
+		Graphs.list.push(new Graphs.graph(fractal, Graphs.list.length));
+		if(!Graphs.editor) {
+			Graphs.editor = Graphs.editorGraph(0);
+			Graphs.setEditorGraph(0);
+		}
+		Graphs.setPositions();
+	},
+	setIndexes:function(){
+		for(var i=0;i<Graphs.list.length;i++){ Graphs.list[i].setIndex(i); }
+	},
+	setPositions:function(){
+		for(var i=0;i<Graphs.list.length;i++){ Graphs.list[i].setPosition(35+65*i, window.innerHeight-113); }
+		var editor = Graphs.editor;
+		if(editor) editor.setPosition((window.innerWidth-editor.w)/2,(window.innerHeight-editor.h)/2);
+	},
+	setActive:function(index){
+		Graphs.setEditorGraph(index);
+		for(var i=0;i<Graphs.list.length;i++){
+			var g=Graphs.list[i];
+			if((i==index) != g.active){
+				g.active = !g.active;
+				g.draw();
+			}
+		}
+	},
+	save:function(i){
+		var e = Graphs.editor, g = Graphs.list[i];
+		if(e){
+			g.fractal = e.fractal.slice(0);
+			g.draw();
+		}
+	},
+	setEditorGraph:function(i){
+		var e = Graphs.editor;
+		if(e){
+			e.fractal = Graphs.list[i].fractal.slice(0);
+			e.draw();
+		}
+	},
+	editorGraph:function(i){
+		var me = new Graphs.graph(null,i);
+		me.setSize(400,400);
+		me.editor = true;
+		me.canvas.onmouseover = false;
+		me.canvas.onmouseout =  false;
+		me.canvas.onmousemove = false;
+		me.canvas.onclick = function(e){
+			Animation.stop();
+			me.togglePoint(Math.round(100*(e.pageX - me.x)/me.w)/100, Math.round(100*(me.y - e.pageY)/me.h)/100 + 0.5);
+			Animation.start(me.fractal);
+		}
+		var close = function(a,b){
+			var delta = 0.02;
+			return ((a[0]-b[0])*(a[0]-b[0])+(a[1]-b[1])*(a[1]-b[1]) < delta*delta);
+		}
+		me.togglePoint = function(x,y){
+			if(close([0,0],[x,y]) || close([1,0],[x,y])) return;
+			for(i=0; i<me.fractal.length; i+=2) {
+				var fx=me.fractal[i], fy=me.fractal[i+1];
+				if(close([x,y],[fx,fy])){
+					me.fractal.splice(i,2);
+					me.draw();
+					return;
+				}else if(x<fx) break;
+			}
+			me.fractal.splice(i,0,x,y);
+			me.draw();
+			Graphs.list[me.index].draw();
+		}
+		return me;
+	},
+	graph:function(fractal,index){
+		this.visible = false;
+		this.active = false;
+		this.hover = false;
+		this.saveControlHover = false;
+		this.deleteControlHover = false;
+		this.fractal = (fractal||[]).slice(0);
+		this.index = index;
+		this.canvas = document.createElement("canvas");
+		document.body.appendChild(this.canvas);
+		this.context = this.canvas.getContext("2d");
+		var s = this.canvas.style;
+		this.canvas.style.position = 'absolute';
+		this.canvas.style.display = "none";
+		s.zIndex = 2000;
+		var mouseInRect = function(event, left, top, rect){
+			var x = event.pageX - left, y = event.pageY - top;
+			return (rect[0]<=x && rect[1]<=y && rect[0]+rect[2]>x && rect[1]+rect[3]>y);
+		};
+		var reactHover = function(hover,event){
+			var me = Graphs.list[index];
+			if(mouseInRect(event, me.x, me.y, me.saveControlRect)){
+//				me.saveControlHover = (me.fractal.toSource()!=Graphs.editor.fractal.toSource());
+				me.hover = false;
+				me.deleteControlHover = false;
+			}else{
+				me.saveControlHover = false;
+				me.hover=hover;
+				me.deleteControlHover = mouseInRect(event, me.x, me.y, me.deleteControlRect);
+			}
+			me.draw();
+		}
+		this.canvas.onclick = function(e){
+			var me = Graphs.list[index];
+			if(mouseInRect(e, me.x, me.y, me.saveControlRect)){
+				Graphs.save(index);
+			}else if(mouseInRect(e, me.x, me.y, me.deleteControlRect)){
+				Graphs.delete(index);
+			}else{
+				Graphs.choose(index);
+			}
+		};
+		this.canvas.onmouseover = function(e){reactHover(true,e)};
+		this.canvas.onmouseout = function(e){reactHover(false,e)};
+		this.canvas.onmousemove = function(e){reactHover(true,e)};
+		this.setIndex = function(i){
+			index = i;
+		}
+		this.setSize = function(w,h) {
+			this.w = w;
+			this.h = h;
+			this.canvas.width = w;
+			this.canvas.height = h;
+			this.graphRect = [0, (h-w)/2, w, w]; // not a typo: want a square
+			this.deleteControlRect = [w-17, h-13, 13, 13];
+			this.saveControlRect = [0,0,w,(h-w)/2];
+		}
+		this.setPosition = function(x, y) {
+			this.x = x;
+			this.y = y;
+			this.canvas.style.left = x+'px';
+			this.canvas.style.top = y+'px';
+		}
+		this.setVisible = function(visible){
+			this.canvas.style.opacity = visible ? 1 : 0;
+			this.canvas.style.display = visible ? "block" : "none";
+		}
+		this.roundedRectPath = function(context, rect, radius){
+			var c = context, x = rect[0], y = rect[1], w = rect[2], h = rect[3], r = radius;
+			c.beginPath();
+	        c.moveTo(x+r, y);
+	        c.lineTo(x+w-r, y);
+	        c.quadraticCurveTo(x+w, y, x+w, y+r);
+	        c.lineTo(x+w, y+h-r);
+	        c.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+	        c.lineTo(x+r, y+h);
+	        c.quadraticCurveTo(x, y+h, x, y+h-r);
+	        c.lineTo(x, y+r);
+	        c.quadraticCurveTo(x, y, x+r, y);
+		}
+		this.draw = function(){
+			var c = this.context;			
+			var x = this.graphRect[0]+1, y = this.graphRect[1]+1, w = this.graphRect[2]-2, h = this.graphRect[3]-2;
+			var baseline = y+h/2;
+			var radius = 5;
+			
+			c.clearRect(0, 0, this.w, this.h);
+			
+			// translucent background
+			c.fillStyle = this.hover ? 'rgba(190,230,255,1)' : 'rgba(180,220,255,0.7)';
+			c.fillRect(x+2, y+2, w-4, h-4);
+			
+			// baseline
+			c.strokeStyle = 'rgba(225,255,255,0.7)';
+			c.lineWidth = 1;
+			c.beginPath();
+	        c.moveTo(x+1,baseline);
+	        c.lineTo(x+w-1,baseline);
+	        c.stroke();
+	
+			// graph
+			c.fillStyle = c.strokeStyle = this.editor ? '#FFC' : '#FFF';
+			c.lineWidth = this.editor ? 4 : 3;
+			c.lineJoin = "round";
+			c.beginPath();
+			c.moveTo(x,baseline);
+			for(var i=0;i<this.fractal.length;i+=2){
+				var px = x+w*this.fractal[i];
+				var py = baseline-h*this.fractal[i+1];
+				c.lineTo(px,py);
+			}
+			c.lineTo(x+w,baseline);
+			c.stroke();
+			if(this.editor)
+			for(var i=0;i<this.fractal.length;i+=2){
+			    c.beginPath();
+			    c.arc(x+w*this.fractal[i], baseline-h*this.fractal[i+1], 4, 0, 2 * Math.PI, false);
+			    c.fill();
+			}
+			
+			// bounding box
+		try{
+			if(this.active && !this.editor){
+				// if(Graphs.editor && (this.fractal.toSource()==Graphs.editor.fractal.toSource()))
+				// 	c.strokeStyle = '#48F';
+				// else
+					c.strokeStyle = '#888';
+			}else c.strokeStyle = '#FFF';
+			c.lineWidth = 2;
+			this.roundedRectPath(c,[x,y,w,h],radius);
+			c.stroke();
+		}catch(e){alert(e)}
+		
+			// save button
+			if(this.saveControlHover){
+				c.fillStyle = 'rgba(255,0,0,1)';
+				var r = this.saveControlRect;
+				var radius = r[3]*0.43;
+				var center = [r[0]+r[2]/2,r[1]+radius];
+			    c.beginPath();
+			    c.arc(center[0], center[1], radius, 0, 2 * Math.PI, false);
+			    c.fillStyle = "#8ED6FF";
+			    c.fill();
+			}
+				
+			// delete button
+			if(this.hover){
+				var x = this.deleteControlRect[0], y = this.deleteControlRect[1];
+				var h = this.deleteControlRect[2], w = this.deleteControlRect[3];
+				// c.strokeStyle = this.deleteControlHover ? 'rgb(180,70,70)' : 'rgb(180,120,120)';
+				c.fillStyle = '#BBB';
+				if(this.deleteControlHover) {this.roundedRectPath(c,[x,y,w,h],3); c.fill();}
+				c.strokeStyle = this.deleteControlHover ? '#DDD' : '#999';
+				// c.strokeStyle = this.deleteControlHover ? 'rgb(180,120,120)' : '#999';
+				c.lineWidth = 2;
+				c.beginPath();
+				c.moveTo(x+3,y+3);
+				c.lineTo(x+w-3,y+h-3);
+				c.stroke();
+				c.beginPath();
+				c.moveTo(x+3,y+h-3);
+				c.lineTo(x+w-3,y+3);
+				c.stroke();
+			}
+		}
+		this.remove = function(){
+			this.canvas.parentNode.removeChild(this.canvas);
+		}
+		this.setPosition(0,0);
+		this.setSize(50,84);
+		this.draw();
+	},
+	choose:function(index){
+		this.setActive(index);
+		Animation.start(this.list[index].fractal);
+		if(Graphs.visible) {
+			if(Graphs.faderInterval){
+				window.clearInterval(Graphs.faderInterval);
+				Graphs.show();
+			}
+			window.setTimeout(function(){Graphs.fadeOut();},250);
+		}
+	},
+	delete:function(index){
+		var target = Graphs.list[index];
+		if(Graphs.visible) {
+			target.setVisible(false);
+			if(Graphs.faderInterval){
+				window.clearInterval(Graphs.faderInterval);
+				Graphs.show();
+			}
+			window.setTimeout(function(){Graphs.fadeOut();},250);
+		}
+		Graphs.list.splice(index,1);
+		target.remove();
+		Graphs.setPositions();
+		Graphs.setIndexes();
+	}
+}
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+
+function init() {
+		
+	var fractals = [
+		[0.95, -0.2],
+		[0.5, -0.4],
+		[0.5, -0.5],
+		[0.6, -0.3],
+		[0.2, 0.3, 0.6, 0.2, 0.8, -0.2],
+		[0.2, 0, 0.5, 0.3, 0.8, 0],
+		[0.2, 0.2, 0.5, -0.25, 0.8, 0.2],
+		[0.2, 0, 0.5, 0.4, 0.8, -0.1],
+		[0.2, -0.3, 0.5, -0.3, 0.8, -0.3],
+	    [0.1, 0.1, 0.5, 0.1, 0.9, 0.1],
+	    [0.1, 0.1, 0.5, -0.1, 0.9, 0.1],
+	    [0.1, -0.3, 0.5, 0, 0.9, 0.3],
+	    [0.4, -0.4, 0.8, 0.1],
+		[0.85, -0.3, 0.95, -0.2],
+	    [0.1, 0.1, 0.4, 0.25, 0.5, 0.25, 0.9, 0.1],
+		[0.25, 0.25, 0.5, 0, 0.6, 0.3, 0.7, 0],
+		[0, 0.4, 1, -0.4]
+	];
+
+	Animation.init();
+	Animation.canvas.onclick = Graphs.toggle;
+	for(var i=0;i<fractals.length;i++) Graphs.add(fractals[i]);
+	Graphs.choose(0);
+	window.onresize = function(){ Animation.resize(); Animation.drawWaves();}
+
+  if (document.layers)
+    document.captureEvents(Event.KEYDOWN);
+    document.onkeydown =
+    function (evt) {
+        var keyCode = evt ? (evt.which ? evt.which : evt.keyCode) : event.keyCode;
+        if (keyCode == 13) { 
+            Animation.start(Graphs.editor.fractal);
+  			Graphs.fadeOut();
+            return false;
+        }
+        if (keyCode == 27) {
+  			Animation.stop();
+            Graphs.hide();
+            return false;
+        }
+        else
+            return true;
+    };
+
+}
+
+init();
+
+</script>
+</body>
+</html>
